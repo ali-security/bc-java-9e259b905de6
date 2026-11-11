@@ -971,6 +971,11 @@ public abstract class ECCurve
 
             int m = this.getFieldSize();
 
+            if (m > 1142)  // twice 571
+            {
+                throw new IllegalStateException("field size out of range: " + m);
+            }
+            
             // For odd m, use the half-trace 
             if (0 != (m & 1))
             {
