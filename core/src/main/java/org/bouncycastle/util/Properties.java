@@ -24,6 +24,19 @@ public class Properties
     private static final ThreadLocal threadProperties = new ThreadLocal();
 
     /**
+     * Upper bound on the PBKDF2 iteration count honoured when BC takes that count from an
+     * untrusted encoding: the raw JCA PBKDF2 provider (both the {@code SecretKeyFactory}
+     * derivation - which is what decrypting a PBES2-protected PKCS#8 / PEM private key or PKCS#12
+     * bag uses - and the {@code AlgorithmParameters} parse a {@code Cipher} performs for PBES2).
+     * In each case the key-derivation parameters travel inside an unauthenticated container, so an
+     * unbounded count makes processing attacker-supplied material a CPU-exhaustion vector. Default
+     * 10,000,000 - the count RFC 8018 sec. 4.2 names as possibly appropriate for especially
+     * critical keys, so generous enough for deliberately strong settings. Read via
+     * {@link #asInteger(String, int)}.
+     */
+    public static final String PBE_MAX_ITERATION_COUNT = "org.bouncycastle.pbe.max_iteration_count";
+
+    /**
      * Return whether a particular override has been set to true.
      *
      * @param propertyName the property name for the override.
@@ -125,6 +138,18 @@ public class Properties
         }
 
         return null;
+    }
+
+    public static int asInteger(String propertyName, int defaultValue)
+    {
+        String p = getPropertyValue(propertyName);
+
+        if (p != null)
+        {
+            return Integer.parseInt(p);
+        }
+
+        return defaultValue;
     }
 
     public static Set<String> asKeySet(String propertyName)
