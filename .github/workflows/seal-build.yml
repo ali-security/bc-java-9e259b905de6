@@ -1,0 +1,81 @@
+name: seal-build
+
+# Build-and-pack only: the test suite runs on Travis (.travis.yml).
+# Mirrors the project's own release path (build15+ then jar_process.sh -> add_module.sh prov):
+# Ant build-provider on JDK 8 (public manifest: Originally-Created-By 25.275-b01, Ant-Version 1.6.5)
+# emitting class v49, the META-INF/services injection from build15+, then the multi-release
+# layers (META-INF/versions/9, 11, 15) that add_module.sh compiles with JDK 9, 11 and 15.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JDK 8/9/11/15 and Ant 1.6.5
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          install_jdk() {
+            url="$1"; dest="$2"
+            rm -rf stage && mkdir stage
+            curl -fsSL -o jdk.tar.gz "$url"
+            tar -xzf jdk.tar.gz -C stage
+            home="$(dirname "$(dirname "$(find stage -path '*/bin/javac' | head -1)")")"
+            sudo mkdir -p "$(dirname "$dest")"
+            sudo rm -rf "$dest"
+            sudo mv "$home" "$dest"
+            "$dest/bin/javac" -version
+          }
+          # Paths are the ones build15+, add_module.sh and jar_process.sh expect.
+          install_jdk https://github.com/AdoptOpenJDK/openjdk8-binaries/releases/download/jdk8u275-b01/OpenJDK8U-jdk_x64_linux_hotspot_8u275b01.tar.gz /usr/local/openjdk-8
+          install_jdk https://github.com/AdoptOpenJDK/openjdk9-binaries/releases/download/jdk-9%2B181/OpenJDK9U-jdk_x64_linux_hotspot_9_181.tar.gz /usr/lib/jvm/java-9-openjdk-amd64
+          install_jdk https://github.com/AdoptOpenJDK/openjdk11-binaries/releases/download/jdk-11.0.11%2B9/OpenJDK11U-jdk_x64_linux_hotspot_11.0.11_9.tar.gz /usr/local/openjdk-11
+          install_jdk https://github.com/AdoptOpenJDK/openjdk15-binaries/releases/download/jdk-15.0.2%2B7/OpenJDK15U-jdk_x64_linux_hotspot_15.0.2_7.tar.gz /usr/local/openjdk-15
+          curl -fsSL -o ant.tar.gz https://archive.apache.org/dist/ant/binaries/apache-ant-1.6.5-bin.tar.gz
+          tar -xzf ant.tar.gz
+          # The runner exports its own ANT_HOME, which the Ant 1.6.5 launcher would obey.
+          echo "ANT_HOME=$RUNNER_TEMP/apache-ant-1.6.5" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=/usr/local/openjdk-8" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/apache-ant-1.6.5/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/openjdk-8/bin" >> "$GITHUB_PATH"
+
+      - name: Build provider jar (ant/jdk15+.xml build-provider)
+        env:
+          ANT_OPTS: -Xmx2g
+        run: |
+          set -euo pipefail
+          java -version
+          ant -version
+          ant -f ant/jdk15+.xml build-provider
+          ls -l build/artifacts/jdk1.5/jars/
+
+      - name: Add META-INF/services (as build15+ does)
+        run: |
+          set -euo pipefail
+          tar cf - prov/src/main/resources/META-INF | (cd build/artifacts/jdk1.5/jars/; tar xf -)
+          cd build/artifacts/jdk1.5/jars/
+          mv prov/src/main/resources/META-INF .
+          jar uf bcprov-jdk15on-168.jar META-INF
+          rm -r prov META-INF
+
+      - name: Add multi-release layers (add_module.sh prov)
+        run: |
+          set -euo pipefail
+          sh add_module.sh prov
+          JAR=build/artifacts/jdk1.5/jars/bcprov-jdk15on-168.jar
+          for v in 9 11 15; do
+            echo "META-INF/versions/$v entries: $(unzip -l "$JAR" | awk -v p="META-INF/versions/$v/" 'index($4, p) == 1 { n++ } END { print n + 0 }')"
+          done
+          mkdir -p seal-out
+          cp "$JAR" seal-out/bcprov-jdk15on-1.68.jar
+          unzip -l seal-out/bcprov-jdk15on-1.68.jar | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bcprov-jdk15on-1.68
+          path: seal-out/bcprov-jdk15on-1.68.jar
+          if-no-files-found: error
